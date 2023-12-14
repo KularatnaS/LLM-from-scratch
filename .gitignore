@@ -1,3 +1,4 @@
 llm-from-scratch-env/
 llm.egg-info/
 __pycache__/
+.idea/
