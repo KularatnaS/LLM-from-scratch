@@ -5,14 +5,14 @@ import torch
 import torch.nn as nn
 
 from model.model import InputEmbeddings, PositionalEncoding, LayerNormalization, FeedForwardBlock, MultiHeadAttentionBlock, \
-    ResidualConnection, EncoderBlock, Encoder, ProjectionLayer
+    ResidualConnection, EncoderBlock, Encoder, ProjectionLayer, build_transformer
 
 
 import logging
 LOGGER = logging.getLogger(__name__)
 
 
-class Test_3d_transformer_model(unittest.TestCase):
+class Test_llm_model(unittest.TestCase):
 
     def test_input_embeddings(self):
         # GIVEN
@@ -166,6 +166,27 @@ class Test_3d_transformer_model(unittest.TestCase):
         # WHEN / THEN
         output = projection_layer(x)
         self.assertEqual(output.shape, (batch_size, seq_len, vocab_size))
+
+    def test_build_transformer(self):
+        # GIVEN
+        src_vocab_size = 10
+        src_seq_len = 3
+        d_model = 512
+        N = 6
+        h = 8
+        dropout = 0.1
+        d_ff = 2048
+        transformer = build_transformer(src_vocab_size, src_seq_len, d_model, N, h, dropout, d_ff)
+        x = torch.tensor([[1, 2, 3], [4, 5, 6]])
+        mask = torch.zeros(2, h, src_seq_len, src_seq_len)
+
+        # WHEN / THEN
+        output_encode = transformer.encode(x, mask)
+        self.assertEqual(output_encode.shape, (2, src_seq_len, d_model))
+
+        # WHEN / THEN
+        output_project = transformer.project(output_encode)
+        self.assertEqual(output_project.shape, (2, src_seq_len, src_vocab_size))
 
 
 if __name__ == '__main__':
