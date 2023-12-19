@@ -30,7 +30,7 @@ def get_or_build_tokenizer(tokenizer_file, data_dir, force_build_tokenizer):
         print("Building tokenizer...")
         tokenizer = Tokenizer(WordLevel(unk_token="[UNK]"))
         tokenizer.pre_tokenizer = Whitespace()
-        trainer = WordLevelTrainer(special_tokens=["[UNK]", "[PAD]", "[EOS]", "[SOS]"], min_frequency=2)
+        trainer = WordLevelTrainer(special_tokens=["[UNK]", "[PAD]"], min_frequency=2)
         tokenizer.train_from_iterator(get_all_sentences(data_dir), trainer=trainer)
         tokenizer.save(str(tokenizer_file))
     else:
@@ -62,23 +62,15 @@ class TextDataset(Dataset):
     def __getitem__(self, idx):
         i = torch.randint(0, len(self.encoded) - self.seq_len, (1,))
         encoder_input = torch.tensor(self.encoded[i: i + self.seq_len])
-        n_pad = torch.randint(0, self.seq_len, (1,))
-        if n_pad > 0:
-            encoder_input[-n_pad:] = self.pad_token
-        # src_text is all tokens of encoder_input, except the pad tokens
-        src_text = self.tokenizer.decode(encoder_input[0: self.seq_len - n_pad].numpy().tolist())
-
         label = torch.tensor(self.encoded[i + 1: i + self.seq_len + 1])
-        if n_pad > 0:
-            label[-n_pad:] = self.pad_token
-        # tgt_text is the last token of label, except the pad tokens
-        tgt_text = self.tokenizer.decode(label[self.seq_len - n_pad - 1].numpy())
 
         return {
             'encoder_input': encoder_input,  # (seq_len,)
-            'encoder_mask': (encoder_input != self.pad_token).unsqueeze(0).unsqueeze(0).int(),  # (1, 1, seq_len)
-            'label': label, # (seq_len,)
-            'src_text': src_text,
-            'tgt_text': tgt_text
+            'encoder_mask': causal_mask(encoder_input.size(0)),  # (1, seq_len, seq_len)
+            'label': label,  # (seq_len,)
         }
 
+
+def causal_mask(size):
+    mask = torch.triu(torch.ones((1, size, size)), diagonal=1).type(torch.int)
+    return mask == 0

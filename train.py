@@ -6,7 +6,7 @@ from torch.utils.data import DataLoader
 from torch.utils.tensorboard import SummaryWriter
 
 from config.config import get_config, get_weights_file_path
-from dataset.dataset import get_or_build_tokenizer, TextDataset
+from dataset.dataset import get_or_build_tokenizer, TextDataset, causal_mask
 from model.model import build_transformer
 
 config = get_config()
@@ -39,18 +39,18 @@ train_dataloader = DataLoader(train_ds, batch_size=batch_size, shuffle=True)
 val_ds = TextDataset(tokenizer, val_data_dir, seq_len)
 val_dataloader = DataLoader(val_ds, batch_size=batch_size, shuffle=True)
 
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"Using device {device}")
+model = build_transformer(vocab_size, seq_len, d_model, N, h, dropout, d_ff).to(device)
+
+# Tensorboard
+writer = SummaryWriter(experiment_name)
+# Optimizer
+optimizer = torch.optim.Adam(model.parameters(), lr=lr, eps=1e-9)
+loss_fn = torch.nn.CrossEntropyLoss(ignore_index=tokenizer.token_to_id("[PAD]"), label_smoothing=0.1).to(device)
+
 
 def train_model():
-    device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
-    print(f"Using device {device}")
-    model = build_transformer(vocab_size, seq_len, d_model, N, h, dropout, d_ff).to(device)
-
-    # Tensorboard
-    writer = SummaryWriter(experiment_name)
-
-    # Optimizer
-    optimizer = torch.optim.Adam(model.parameters(), lr=lr, eps=1e-9)
-
     initial_epoch = 0
     global_step = 0
     if preload is not None:
@@ -60,8 +60,7 @@ def train_model():
         initial_epoch = state['epoch'] + 1
         optimizer.load_state_dict(state['optimizer_state_dict'])
         global_step = state['global_step']
-
-    loss_fn = torch.nn.CrossEntropyLoss(ignore_index=tokenizer.token_to_id("[PAD]"), label_smoothing=0.1).to(device)
+        model.load_state_dict(state['model_state_dict'])
 
     for epoch in range(initial_epoch, epochs):
         model.train()
@@ -89,18 +88,65 @@ def train_model():
             loss.backward()
             optimizer.step()
             optimizer.zero_grad()
-
             global_step += 1
 
+        # run validation
+        run_validation(epoch)
+        test_inference_texts = ['He found what he was looking for in his inside pocket. And then he realised that it was gone. He had lost the Marauder’s Map.',
+                                'Harry and Hermione rushed up to the hospital wing to see Ron. He was lying in a bed with his eyes closed. His face was very pale.',
+                                'The next day, however, Harry barely grinned once. He was in fury with Ron for',]
+        for text in test_inference_texts:
+            inference_test(text)
+
         # save model after each epoch
-        model_filename = get_weights_file_path(model_folder, model_basename, f'{epoch:02d}')
-        print(f"Saving model weights to {model_filename}")
-        torch.save({
-            'epoch': epoch,
-            'global_step': global_step,
-            'optimizer_state_dict': optimizer.state_dict(),
-            'model_state_dict': model.state_dict(),
-        }, model_filename)
+        if epoch % 5 == 0:
+            model_filename = get_weights_file_path(model_folder, model_basename, f'{epoch:02d}')
+            print(f"Saving model weights to {model_filename}")
+            torch.save({
+                'epoch': epoch,
+                'global_step': global_step,
+                'optimizer_state_dict': optimizer.state_dict(),
+                'model_state_dict': model.state_dict(),
+            }, model_filename)
+
+
+def run_validation(epoch):
+    model.eval()
+    with torch.no_grad():
+        batch_iterator_val = tqdm(val_dataloader, desc=f"Validating Epoch {epoch:02d}")
+        for batch in batch_iterator_val:
+            encoder_input = batch['encoder_input'].to(device)
+            encoder_mask = batch['encoder_mask'].to(device)
+            encoder_output = model.encode(encoder_input, encoder_mask)
+            proj_output = model.project(encoder_output)
+            label = batch['label'].to(device)
+            val_loss = loss_fn(proj_output.view(-1, vocab_size), label.view(-1))
+            batch_iterator_val.set_postfix({'validation loss': val_loss.item()})
+            writer.add_scalar('val loss', val_loss.item(), epoch)
+            writer.flush()
+
+
+def inference_test(input_text):
+    model.eval()
+    with torch.no_grad():
+        input_encoded = tokenizer.encode(input_text).ids
+        encoder_input = torch.tensor(input_encoded).unsqueeze(0).to(device)
+        while True:
+            if encoder_input.size(1) == seq_len:
+                break
+            encoder_mask = causal_mask(encoder_input.size(1)).type_as(encoder_input).to(device)
+
+            out = model.encode(encoder_input, encoder_mask)
+            prob = model.project(out[:, -1])
+            _, next_word = torch.max(prob, dim=-1)
+            encoder_input = torch.cat([encoder_input, torch.empty(1, 1).type_as(encoder_input).fill_(next_word.item()).to(device)], dim=1)
+
+        # convert encoder_input to cpu and numpy
+        encoder_input = encoder_input.detach().cpu().numpy()
+        # decode the tokens
+        decoded_tokens = tokenizer.decode(encoder_input[0].tolist())
+        # print the decoded tokens
+        print(decoded_tokens)
 
 
 if __name__ == '__main__':
