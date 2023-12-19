@@ -14,7 +14,7 @@ python train.py
 ```
 
 ## How to perform inference
-Provide a prompt and a path to a trained model as shown in `inference.inference.py` and run:
+Provide a prompt and a path to a trained model as shown in `inference.py` and run:
 ```
 python inference.py
 ```
