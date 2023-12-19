@@ -4,7 +4,7 @@ def get_config():
         'data_dir': 'data/',
         'train_data_dir': 'data/train/',
         'val_data_dir': 'data/val/',
-        'force_build_tokenizer': 'true',  # 'true' or 'false'
+        'force_build_tokenizer': 'false',  # 'true' or 'false'
         'tokenizer_file': 'tokenizer/tokenizer.json',
         # Training parameters
         'seq_len': 64,
